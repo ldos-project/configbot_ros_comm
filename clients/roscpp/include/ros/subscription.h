@@ -41,6 +41,10 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
+// adaptor stuff
+#include <ros/node_handle.h>  
+#include "roscpp/AdaptorService.h"
+
 namespace ros
 {
 
@@ -183,7 +187,30 @@ public:
 
   void headerReceived(const PublisherLinkPtr& link, const Header& h);
 
+
+  void setupAdaptorService();
+  bool adjustAdaptorCallback(roscpp::AdaptorService::Request& req, roscpp::AdaptorService::Response& res);
+
+  // Setter for adaptor frequency
+  void setAdaptorFrequency(double freq) {
+    std::lock_guard<std::mutex> lock(adaptor_mutex_);
+    adaptor_freq_ = freq;
+  }
+
+  // Getter for adaptor frequency
+  double getAdaptorFrequency() {
+    std::lock_guard<std::mutex> lock(adaptor_mutex_);
+    return adaptor_freq_;
+  }
+
 private:
+  // adaptor stuff
+  ros::ServiceServer adaptor_service_; 
+  bool adaptor_service_initialized_; 
+  std::mutex adaptor_mutex_;
+  double adaptor_freq_ = -1;  // Default: No filtering
+  double adaptor_last_msg_time_ = 0.0;
+
   Subscription(const Subscription &); // not copyable
   Subscription &operator =(const Subscription &); // nor assignable
 

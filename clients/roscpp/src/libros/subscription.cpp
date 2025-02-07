@@ -59,6 +59,7 @@
 #include "ros/transport_hints.h"
 #include "ros/subscription_callback_helper.h"
 
+
 #include <boost/make_shared.hpp>
 
 using XmlRpc::XmlRpcValue;
@@ -75,6 +76,29 @@ Subscription::Subscription(const std::string &name, const std::string& md5sum, c
 , shutting_down_(false)
 , transport_hints_(transport_hints)
 {
+  setupAdaptorService();
+}
+
+void Subscription::setupAdaptorService() {
+    if (adaptor_service_initialized_) {
+        return;  // Avoid duplicate service registration
+    }
+
+    ros::NodeHandle nh;
+    std::string service_name = "/adaptor_node/" + ros::this_node::getName() + "/adaptor_sub/" + name_;
+    adaptor_service_ = nh.advertiseService(service_name, &Subscription::adjustAdaptorCallback, this);
+
+    adaptor_service_initialized_ = true;
+    ROS_INFO("[roscpp] Adaptor service started: %s", service_name.c_str());
+}
+
+bool Subscription::adjustAdaptorCallback(roscpp::AdaptorService::Request& req, 
+                                         roscpp::AdaptorService::Response& res) {
+    setAdaptorFrequency(req.input_data);
+    adaptor_freq_ = req.input_data;
+    res.response_message = "[roscpp] Adaptor frequency updated to " + std::to_string(req.input_data);
+    ROS_INFO("[roscpp] Updated adaptor frequency for topic [%s]: %f", name_.c_str(), req.input_data);
+    return true;
 }
 
 Subscription::~Subscription()
@@ -397,7 +421,7 @@ bool Subscription::negotiateConnection(const std::string& xmlrpc_uri)
     }
     else
     {
-      ROS_WARN("Unsupported transport type hinted: %s, skipping", it->c_str());
+      ROSCPP_LOG_DEBUG("Unsupported transport type hinted: %s, skipping", it->c_str());
     }
   }
   params[0] = this_node::getName();
@@ -609,6 +633,17 @@ void Subscription::pendingConnectionDone(const PendingConnectionPtr& conn, XmlRp
 
 uint32_t Subscription::handleMessage(const SerializedMessage& m, bool ser, bool nocopy, const boost::shared_ptr<M_string>& connection_header, const PublisherLinkPtr& link)
 {
+
+  double curr_time = ros::Time::now().toSec();
+  {
+      std::lock_guard<std::mutex> guard(adaptor_mutex_);
+      if (adaptor_freq_ > 0 && (curr_time - adaptor_last_msg_time_) < (1.0 / adaptor_freq_)) {
+          // ROS_INFO("[roscpp] Dropping message due to frequency filter for topic [%s]", name_.c_str());
+          return 1;  // Drop message before any expensive operations
+      }
+      adaptor_last_msg_time_ = curr_time;
+  }
+
   boost::mutex::scoped_lock lock(callbacks_mutex_);
 
   uint32_t drops = 0;
